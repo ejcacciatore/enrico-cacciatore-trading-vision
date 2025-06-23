@@ -1,6 +1,6 @@
 /**
  * Enrico Cacciatore - Trading Vision Presentation
- * Interactive presentation controller
+ * Interactive presentation controller with fixed navigation
  */
 
 class PresentationController {
@@ -17,12 +17,33 @@ class PresentationController {
     init() {
         this.bindEvents();
         this.startDataFlowAnimation();
-        this.animateProgressBars();
+        this.disableScrolling();
         
         // Auto-start progress bar animations for first slide
         setTimeout(() => {
             this.animateCurrentSlideElements();
         }, 1000);
+    }
+
+    disableScrolling() {
+        // Prevent default scrolling behavior
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
+        
+        // Prevent scroll wheel from affecting page
+        document.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            
+            if (this.isTransitioning) return;
+            
+            if (e.deltaY > 0) {
+                // Scroll down = next slide
+                this.nextSlide();
+            } else {
+                // Scroll up = previous slide
+                this.prevSlide();
+            }
+        }, { passive: false });
     }
 
     bindEvents() {
@@ -32,11 +53,15 @@ class PresentationController {
             
             switch(e.key) {
                 case 'ArrowRight':
+                case 'ArrowDown':
                 case 'Space':
+                case 'PageDown':
                     e.preventDefault();
                     this.nextSlide();
                     break;
                 case 'ArrowLeft':
+                case 'ArrowUp':
+                case 'PageUp':
                     e.preventDefault();
                     this.prevSlide();
                     break;
@@ -48,6 +73,10 @@ class PresentationController {
                     e.preventDefault();
                     this.goToSlide(this.totalSlides - 1);
                     break;
+                case 'Escape':
+                    e.preventDefault();
+                    this.toggleFullscreen();
+                    break;
             }
         });
 
@@ -58,7 +87,7 @@ class PresentationController {
         document.addEventListener('touchstart', (e) => {
             startX = e.touches[0].clientX;
             startY = e.touches[0].clientY;
-        });
+        }, { passive: true });
 
         document.addEventListener('touchend', (e) => {
             if (this.isTransitioning) return;
@@ -68,19 +97,29 @@ class PresentationController {
             const diffX = startX - endX;
             const diffY = startY - endY;
 
-            // Only respond to horizontal swipes
+            // Respond to both horizontal and vertical swipes
             if (Math.abs(diffX) > Math.abs(diffY)) {
+                // Horizontal swipe
                 if (diffX > 50) {
                     this.nextSlide();
                 } else if (diffX < -50) {
                     this.prevSlide();
                 }
+            } else {
+                // Vertical swipe
+                if (diffY > 50) {
+                    this.nextSlide();
+                } else if (diffY < -50) {
+                    this.prevSlide();
+                }
             }
-        });
+        }, { passive: true });
 
-        // Navigation dots click events
+        // Navigation dots click events - FIXED
         this.navDots.forEach((dot, index) => {
-            dot.addEventListener('click', () => {
+            dot.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 if (!this.isTransitioning) {
                     this.goToSlide(index);
                 }
@@ -90,6 +129,21 @@ class PresentationController {
         // Prevent context menu on right click for cleaner presentation
         document.addEventListener('contextmenu', (e) => {
             e.preventDefault();
+        });
+
+        // Click anywhere to advance (except on navigation)
+        document.addEventListener('click', (e) => {
+            // Don't advance if clicking on navigation or interactive elements
+            if (e.target.closest('.navigation') || 
+                e.target.closest('.nav-dot') || 
+                e.target.closest('a') || 
+                e.target.closest('button')) {
+                return;
+            }
+            
+            if (!this.isTransitioning) {
+                this.nextSlide();
+            }
         });
     }
 
@@ -108,6 +162,9 @@ class PresentationController {
         this.currentSlide = index;
         this.slides[this.currentSlide].classList.add('active');
         this.navDots[this.currentSlide].classList.add('active');
+        
+        // Update URL hash for bookmarking
+        window.history.replaceState({}, '', `#slide-${this.currentSlide + 1}`);
         
         // Animate elements in the new slide
         setTimeout(() => {
@@ -193,32 +250,6 @@ class PresentationController {
         }, 7000);
     }
 
-    animateProgressBars() {
-        // Animate progress bars when they come into view
-        const observerOptions = {
-            threshold: 0.5,
-            rootMargin: '0px 0px -100px 0px'
-        };
-
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const progressBars = entry.target.querySelectorAll('.progress-fill');
-                    progressBars.forEach((bar, index) => {
-                        setTimeout(() => {
-                            const width = bar.getAttribute('data-width') || bar.style.width;
-                            bar.style.width = width;
-                        }, index * 200);
-                    });
-                }
-            });
-        }, observerOptions);
-
-        this.slides.forEach(slide => {
-            observer.observe(slide);
-        });
-    }
-
     // Utility method to get current slide info
     getCurrentSlideInfo() {
         return {
@@ -265,15 +296,28 @@ document.addEventListener('DOMContentLoaded', () => {
     // Make presentation controller globally available for debugging
     window.presentation = presentation;
     
+    // Handle initial URL hash
+    const hash = window.location.hash;
+    if (hash.startsWith('#slide-')) {
+        const slideNumber = parseInt(hash.replace('#slide-', '')) - 1;
+        if (slideNumber >= 0 && slideNumber < presentation.totalSlides) {
+            presentation.goToSlide(slideNumber);
+        }
+    }
+    
     // Add keyboard shortcuts display (optional)
     console.log(`
         🎯 Enrico Cacciatore - Trading Vision Presentation
         
-        Keyboard shortcuts:
-        → / Space: Next slide
-        ← : Previous slide
+        Navigation:
+        → ↓ Space: Next slide
+        ← ↑: Previous slide
+        Scroll wheel: Navigate slides
+        Click anywhere: Next slide
+        Click dots: Jump to slide
         Home: First slide
         End: Last slide
+        Esc: Toggle fullscreen
         
         Current slide: ${presentation.getCurrentSlideInfo().current}/${presentation.getCurrentSlideInfo().total}
     `);
@@ -288,19 +332,6 @@ window.showSlide = function(index) {
 
 // Performance optimization: Preload critical resources
 window.addEventListener('load', () => {
-    // Preload fonts
-    const fontUrls = [
-        'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap'
-    ];
-    
-    fontUrls.forEach(url => {
-        const link = document.createElement('link');
-        link.rel = 'preload';
-        link.as = 'style';
-        link.href = url;
-        document.head.appendChild(link);
-    });
-    
     // Add loading complete class for any additional animations
     document.body.classList.add('loaded');
 });
